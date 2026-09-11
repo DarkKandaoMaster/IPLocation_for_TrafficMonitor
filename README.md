@@ -8,9 +8,9 @@
 
 ## Accurate IPLocation Plugin for TrafficMonitor | Real-time IP & Region
 ### Description
-I've built a new IPLocation plugin for TrafficMonitor that accurately displays your public egress IP and geographic region, auto-refreshing every 30 seconds. It fixes the inaccurate display and lack of region support in the original plugin.
+This plugin displays the public IPv4 address reported by external lookup services, with geographic information in the tooltip. It polls automatically; the timing and selection rules are described below.
 ### Useful scenarios
-Verify VPN/proxy node switching instantly
+Check VPN/proxy node switching
 Check public IP quickly for remote development & server configuration
 Troubleshoot network issues with real egress IP
 Monitor IP status across multiple network environments
@@ -20,11 +20,21 @@ TrafficMonitor is a lightweight Windows tool. This plugin adds one feature that 
 - Show the **current public (egress) IP** on the taskbar window
 - Provide a tooltip for quick copy/verification
 
-The goal is simple: when you switch nodes, you should be able to confirm the current egress IP within seconds.
+After switching nodes, the next completed poll updates the displayed address. With proxy routing rules, different lookup services may observe different egress IPs.
 
-- Data source priority:
-  - `ipwho.is` (returns IP + location; supports `lang=zh-CN`)
-  - Fallback: `api.ipify.org` (IP only) + `ip-api.com` (country)
+- Address lookup: `ipv4.icanhazip.com`, `api4.ipify.org`, `v4.ident.me`, `ipinfo.io/ip`, `api.ip.sb/ip`
+  - Three are queried **simultaneously** per poll. The batch advances by one source
+    each time, and the poll waits for all three requests to finish.
+  - The most frequent valid IPv4 wins; one valid response is sufficient. Ties prefer
+    the last published IP if it is among the tied results; otherwise the first tied
+    result in batch order wins. A failed poll clears this preference.
+  - JSON fallback, only if all three failed: `ip-api.com`, `ipwho.is`
+- Location lookup (tooltip only): `ipwho.is` (`lang=zh-CN`), falling back to `ip-api.com`.
+  Only the last successful location is cached. A matching IP reuses it; otherwise a
+  lookup runs after publishing the IP. Failed location lookups are retried on later polls.
+
+Every request is sent with no-cache headers, `WINHTTP_FLAG_REFRESH` and a varying
+`_=<tick>` parameter to reduce stale responses from proxy or CDN caches.
 
 This plugin also provides tooltip text via `ITMPlugin::GetTooltipInfo()`.
 
@@ -98,13 +108,15 @@ Tip: if you update the DLL, fully exit TrafficMonitor (ensure the process ends) 
 
 ## Behavior
 
-- Auto refresh: every **30 seconds** (full refresh: IP + location)
+- Auto refresh: waits **30 seconds after a successful update completes**, or **10 seconds after IP lookup fails**, before the next poll. Request time and any location lookup add to the interval between IP updates.
 - Manual click refresh: not used (disabled)
-- Tooltip: shows `Public IP` and one merged `地区` line (avoids duplicated country/region/city)
+- Taskbar item: the IPv4 address on its own; `Failed` when it could not be fetched
+- Tooltip: shows the IP, one `地区` line (city preferred, then region, then country),
+  `IP地址更新时间` (result publication time, also updated when location lookup succeeds) and the selected source's vote count, or the JSON fallback source
 
 IPv4 only:
 
-- The displayed IP is forced to IPv4 (some networks return IPv6 by default).
+- Only valid IPv4 responses are accepted; an IPv6 response is ignored.
 
 ## Data quality notes
 
